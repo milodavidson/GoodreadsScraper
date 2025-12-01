@@ -126,6 +126,65 @@ def split_by_newline(txt):
     return txt.split("\n")
 
 
+def deduplicate_text(text):
+    """Remove duplicated consecutive text in author bios"""
+    if not text or len(text) < 100:
+        return text
+    
+    # Try different split points to find where duplication starts
+    # The duplicate typically starts around 40-60% through the text
+    for split_point in range(len(text) // 3, (len(text) * 2) // 3):
+        first_part = text[:split_point]
+        second_part = text[split_point:]
+        
+        # Check if first_part appears at the start of second_part
+        # Use first 100 chars as a signature to detect duplication
+        signature_len = min(100, len(first_part))
+        if signature_len > 50 and second_part.startswith(first_part[:signature_len]):
+            return first_part
+    
+    return text
+
+
+def extract_contributors_with_roles(key: str):
+    """Extract contributor names with their roles from primary and secondary contributor edges"""
+    def extract(text: str):
+        data = json.loads(text)
+        contributors = []
+        
+        # Get all Book objects
+        apollo_state = data.get('props', {}).get('pageProps', {}).get('apolloState', {})
+        for book_key in [k for k in apollo_state.keys() if k.startswith('Book:')]:
+            book = apollo_state[book_key]
+            
+            # Primary contributor (usually the main author)
+            primary = book.get('primaryContributorEdge')
+            if primary:
+                contributor_ref = primary.get('node', {}).get('__ref')
+                if contributor_ref and contributor_ref in apollo_state:
+                    contributor_name = apollo_state[contributor_ref].get('name')
+                    if contributor_name:
+                        contributors.append({
+                            'name': contributor_name,
+                            'role': primary.get('role', 'Unknown')
+                        })
+            
+            # Secondary contributors (translators, editors, etc.)
+            secondary = book.get('secondaryContributorEdges', [])
+            for edge in secondary:
+                contributor_ref = edge.get('node', {}).get('__ref')
+                if contributor_ref and contributor_ref in apollo_state:
+                    contributor_name = apollo_state[contributor_ref].get('name')
+                    if contributor_name:
+                        contributors.append({
+                            'name': contributor_name,
+                            'role': edge.get('role', 'Unknown')
+                        })
+        
+        return [contributors] if contributors else []
+    return extract
+
+
 class BookItem(scrapy.Item):
     # Scalars
     url = Field()
@@ -143,6 +202,7 @@ class BookItem(scrapy.Item):
     series = Field(input_processor=MapCompose(json_field_extractor_v2('props.pageProps.apolloState.Series*.title')), output_processor=Compose(set, list))
 
     author = Field(input_processor=MapCompose(json_field_extractor_v2('props.pageProps.apolloState.Contributor*.name')), output_processor=Compose(set, list))
+    contributors = Field(input_processor=MapCompose(extract_contributors_with_roles('contributors')), output_processor=Compose(TakeFirst(), list))
 
     places = Field(input_processor=MapCompose(json_field_extractor_v2('props.pageProps.apolloState.Work*.details.places[].name')), output_processor=Compose(set, list))
     characters = Field(input_processor=MapCompose(json_field_extractor_v2('props.pageProps.apolloState.Work*.details.characters[].name')), output_processor=Compose(set, list))
@@ -180,10 +240,10 @@ class AuthorItem(scrapy.Item):
 
     # Blobs
     about = Field(
-        # Take the first match, remove HTML tags, convert to list of lines, remove empty lines, remove the "edit data" prefix
+        # Take the first match, remove HTML tags, convert to list of lines, remove empty lines, remove the "edit data" prefix, then deduplicate
         input_processor=Compose(TakeFirst(), remove_tags, split_by_newline,
                                 filter_empty, lambda s: s[1:]),
-        output_processor=Join())
+        output_processor=Compose(Join(), deduplicate_text))
 
 
 class AuthorLoader(ItemLoader):

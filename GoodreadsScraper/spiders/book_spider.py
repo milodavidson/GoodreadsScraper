@@ -41,6 +41,7 @@ class BookSpider(scrapy.Spider):
         loader.add_css('publisher', 'script#__NEXT_DATA__::text')
         loader.add_css('series', 'script#__NEXT_DATA__::text')
         loader.add_css('author', 'script#__NEXT_DATA__::text')
+        loader.add_css('contributors', 'script#__NEXT_DATA__::text')
         loader.add_css('publishDate', 'script#__NEXT_DATA__::text')
 
         loader.add_css('characters', 'script#__NEXT_DATA__::text')
